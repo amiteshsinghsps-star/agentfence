@@ -1,0 +1,109 @@
+version: "3.8"
+
+services:
+  # MCP Interception Proxy
+  proxy:
+    build:
+      context: .
+      target: proxy
+    ports:
+      - "8443:8443"
+    environment:
+      - AGENTFENCE_FREEZE_THRESHOLD=0.50
+      - AGENTFENCE_QUARANTINE_THRESHOLD=0.75
+      - AGENTFENCE_FAILURE_MODE=closed
+    depends_on:
+      - nats
+      - redis
+    restart: unless-stopped
+
+  # WebSocket Event Gateway
+  wsgateway:
+    build:
+      context: .
+      target: wsgateway
+    ports:
+      - "8080:8080"
+    environment:
+      - AGENTFENCE_WS_ADDR=:8080
+    restart: unless-stopped
+
+  # Control-Plane API
+  apiserver:
+    build:
+      context: .
+      target: apiserver
+    ports:
+      - "8081:8081"
+    environment:
+      - AGENTFENCE_API_ADDR=:8081
+      - DATABASE_URL=postgres://agentfence:changeme@postgres:5432/agentfence?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Dashboard (React dev mode)
+  dashboard:
+    build:
+      context: .
+      target: dashboard
+    ports:
+      - "3000:80"
+    depends_on:
+      - wsgateway
+      - apiserver
+    restart: unless-stopped
+
+  # React dev server (hot reload)
+  dashboard-dev:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./web:/app
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - wsgateway
+      - apiserver
+    profiles:
+      - dev
+
+  # PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agentfence
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: agentfence
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentfence"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis (session cache / hot state)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  # NATS JetStream (event bus)
+  nats:
+    image: nats:2.10-alpine
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-js", "-m", "8222"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

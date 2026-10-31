@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.policyBundle.configMapName | default (printf "%s-policy-bundle" (include "agentfence.fullname" .)) }}
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+data:
+  default.rego: |
+    package agentfence
+
+    import future.keywords.if
+    import future.keywords.in
+
+    default decision := {"outcome": "DENY", "reason": "no matching allow rule (default deny)"}
+
+    decision := {"outcome": "ALLOW", "reason": "low risk, in declared scope"} if {
+        input.blast_report == null
+        scope_permits(input.tool)
+        input.suspicion < 0.5
+    }
+
+    decision := {"outcome": "REQUIRE_APPROVAL", "reason": sprintf(
+        "destructive action, criticality %d — human approval required", [input.blast_report.criticality_score]
+    )} if {
+        input.blast_report != null
+        input.blast_report.destructive == true
+        input.blast_report.criticality_score >= 70
+    }
+
+    decision := {"outcome": "DENY", "reason": "write attempted under read-only declared scope"} if {
+        "read-only" in input.session.declared_scope
+        is_write_tool(input.tool)
+    }
+
+    decision := {"outcome": "DENY", "reason": "session suspicion above fence threshold"} if {
+        input.suspicion >= 0.75
+    }
+
+    is_write_tool(tool) if {
+        write_prefixes := {"kubectl.delete", "kubectl.apply", "kubectl.patch",
+            "terraform.apply", "terraform.destroy",
+            "shell.exec", "fs.write", "fs.delete"}
+        tool in write_prefixes
+    }
+
+    scope_permits(tool) if {
+        not is_write_tool(tool)
+    }
+    scope_permits(tool) if {
+        not "read-only" in input.session.declared_scope
+    }

@@ -1,0 +1,139 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "agentfence.fullname" . }}-postgresql
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  serviceName: {{ include "agentfence.fullname" . }}-postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "agentfence.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgresql
+  template:
+    metadata:
+      labels:
+        {{- include "agentfence.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      containers:
+        - name: postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          ports:
+            - containerPort: 5432
+              name: postgresql
+          env:
+            - name: POSTGRES_USER
+              value: "{{ .Values.postgresql.auth.username }}"
+            - name: POSTGRES_PASSWORD
+              value: "{{ .Values.postgresql.auth.password }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.postgresql.auth.database }}"
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.postgresql.auth.username }}"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.postgresql.auth.username }}"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: {{ include "agentfence.fullname" . }}-postgresql-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.postgresql.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentfence.fullname" . }}-postgresql
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: postgresql
+      name: postgresql
+  selector:
+    {{- include "agentfence.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentfence.fullname" . }}-postgresql-init
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+data:
+  001_init.sql: |
+    CREATE TABLE IF NOT EXISTS agents (
+        agent_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        display_name TEXT NOT NULL,
+        framework TEXT NOT NULL DEFAULT 'unknown',
+        spiffe_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+        session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id UUID NOT NULL REFERENCES agents(agent_id),
+        parent_session_id UUID REFERENCES sessions(session_id),
+        declared_intent TEXT NOT NULL DEFAULT '',
+        declared_scope_tags TEXT[] NOT NULL DEFAULT '{}',
+        state TEXT NOT NULL DEFAULT 'OPEN' CHECK (state IN ('OPEN','HALF_OPEN','FENCED','TERMINATED')),
+        suspicion_score NUMERIC(6,3) NOT NULL DEFAULT 0,
+        started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        ended_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS decisions (
+        decision_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        call_id UUID NOT NULL,
+        session_id UUID NOT NULL REFERENCES sessions(session_id),
+        policy_version TEXT NOT NULL DEFAULT 'unknown',
+        outcome TEXT NOT NULL CHECK (outcome IN ('ALLOW','DENY','REQUIRE_APPROVAL','SIMULATED_BLOCK')),
+        reason TEXT NOT NULL DEFAULT '',
+        blast_report JSONB,
+        suspicion_at_time NUMERIC(6,3) NOT NULL DEFAULT 0,
+        decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        prev_hash TEXT NOT NULL,
+        this_hash TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE IF NOT EXISTS fence_events (
+        fence_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id UUID NOT NULL REFERENCES sessions(session_id),
+        level TEXT NOT NULL CHECK (level IN ('FREEZE','QUARANTINE','KILL')),
+        trigger TEXT NOT NULL,
+        trigger_reason TEXT NOT NULL DEFAULT '',
+        triggered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        cleared_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS spawn_edges (
+        edge_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        parent_session_id UUID NOT NULL,
+        child_session_id UUID NOT NULL,
+        inherited_state TEXT NOT NULL DEFAULT 'OPEN',
+        flagged BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+{{- end }}

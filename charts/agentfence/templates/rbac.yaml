@@ -1,0 +1,60 @@
+{{- if .Values.rbac.create }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agentfence.fullname" . }}-proxy
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+  {{- with .Values.rbac.serviceAccountAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agentfence.fullname" . }}-wsgateway
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agentfence.fullname" . }}-apiserver
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+---
+# Proxy RBAC — needed for sidecar injection and K8s API access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agentfence.fullname" . }}-proxy
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agentfence.fullname" . }}-proxy
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agentfence.fullname" . }}-proxy
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agentfence.fullname" . }}-proxy
+    namespace: {{ .Release.Namespace }}
+{{- end }}

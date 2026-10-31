@@ -1,0 +1,14 @@
+Unilog/
+.venv*/
+venv/
+__pycache__/
+*.pyc
+bin/
+node_modules/
+web/node_modules/
+web/dist/
+.env
+.env.*
+*.exe
+*.log
+.DS_Store

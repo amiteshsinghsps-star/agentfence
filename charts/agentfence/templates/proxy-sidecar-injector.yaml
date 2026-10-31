@@ -1,0 +1,83 @@
+{{- if .Values.sidecarInjector.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agentfence.fullname" . }}-sidecar-config
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+data:
+  sidecar.yaml: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: placeholder
+    spec:
+      template:
+        metadata:
+          annotations:
+            agentfence.io/injected: "true"
+        spec:
+          containers:
+            - name: agentfence-proxy
+              image: {{ include "agentfence.proxyImage" . }}
+              imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
+              ports:
+                - containerPort: 8443
+                  name: mcp
+              env:
+                - name: AGENTFENCE_FREEZE_THRESHOLD
+                  value: "{{ .Values.proxy.fencing.freezeThreshold }}"
+                - name: AGENTFENCE_QUARANTINE_THRESHOLD
+                  value: "{{ .Values.proxy.fencing.quarantineThreshold }}"
+                - name: AGENTFENCE_FAILURE_MODE
+                  value: "{{ .Values.proxy.failureMode }}"
+              resources:
+                {{- toYaml .Values.proxy.resources | nindent 16 }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "agentfence.fullname" . }}-sidecar-injector
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "agentfence.fullname" . }}-sidecar-cert
+webhooks:
+  - name: sidecar.agentfence.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 10
+    reinvocationPolicy: IfNeeded
+    namespaceSelector:
+      matchLabels:
+        {{- toYaml .Values.sidecarInjector.namespaceSelector.matchLabels | nindent 8 }}
+    objectSelector:
+      matchLabels:
+        {{- toYaml .Values.sidecarInjector.objectSelector.matchLabels | nindent 8 }}
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+    clientConfig:
+      service:
+        name: {{ include "agentfence.fullname" . }}-sidecar-injector
+        namespace: {{ .Release.Namespace }}
+        path: /mutate
+      caBundle: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentfence.fullname" . }}-sidecar-injector
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 443
+      targetPort: 8443
+  selector:
+    {{- include "agentfence.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+{{- end }}

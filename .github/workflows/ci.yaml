@@ -1,0 +1,110 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.23"
+  NODE_VERSION: "22"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  go-test:
+    name: Go Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Download dependencies
+        run: go mod download
+      - name: Run tests
+        run: go test -v -race -count=1 ./...
+      - name: Build binaries
+        run: |
+          go build -o /dev/null ./cmd/proxy/
+          go build -o /dev/null ./cmd/wsgateway/
+          go build -o /dev/null ./cmd/apiserver/
+
+  opa-test:
+    name: Rego Policy Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run OPA tests
+        uses: open-policy-agent/opa@v1
+        with:
+          args: test policy/agentfence/ -v
+
+  web-build:
+    name: Web Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+      - name: Type check
+        run: npm run typecheck
+        working-directory: web
+      - name: Build
+        run: npm run build
+        working-directory: web
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [go-test, web-build]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push proxy
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: proxy
+          push: true
+          tags: ghcr.io/agentfence/proxy:${{ github.sha }},ghcr.io/agentfence/proxy:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build and push dashboard
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: dashboard
+          push: true
+          tags: ghcr.io/agentfence/dashboard:${{ github.sha }},ghcr.io/agentfence/dashboard:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

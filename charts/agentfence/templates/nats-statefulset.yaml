@@ -1,0 +1,100 @@
+{{- if .Values.nats.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "agentfence.fullname" . }}-nats
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  serviceName: {{ include "agentfence.fullname" . }}-nats
+  replicas: {{ .Values.nats.replicas }}
+  selector:
+    matchLabels:
+      {{- include "agentfence.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  template:
+    metadata:
+      labels:
+        {{- include "agentfence.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nats
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: nats
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: nats
+          image: "{{ .Values.nats.image.repository }}:{{ .Values.nats.image.tag }}"
+          ports:
+            - containerPort: 4222
+              name: client
+            - containerPort: 8222
+              name: monitor
+            - containerPort: 6222
+              name: cluster
+            - containerPort: 7422
+              name: leafnodes
+          args:
+            - "--jetstream"
+            - "--store_dir=/data"
+            - "--max_payload=1MB"
+            {{- if gt (int .Values.nats.replicas) 1 }}
+            - "--cluster_name=agentfence"
+            - "--cluster=nats://0.0.0.0:6222"
+            - "--routes=nats://{{ include "agentfence.fullname" . }}-nats-0.{{ include "agentfence.fullname" . }}-nats:6222"
+            {{- end }}
+          resources:
+            {{- toYaml .Values.nats.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 4222
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - nats
+                - server
+                - ping
+                - -s
+                - nats://localhost:4222
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.nats.jetstream.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentfence.fullname" . }}-nats
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4222
+      targetPort: client
+      name: client
+    - port: 8222
+      targetPort: monitor
+      name: monitor
+  selector:
+    {{- include "agentfence.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+{{- end }}

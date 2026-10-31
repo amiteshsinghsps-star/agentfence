@@ -1,0 +1,57 @@
+{{- if .Values.monitoring.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "agentfence.fullname" . }}
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "agentfence.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: mcp
+      path: /healthz
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.monitoring.prometheusRules.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "agentfence.fullname" . }}
+  labels:
+    {{- include "agentfence.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: agentfence
+      rules:
+        - alert: ChainVerificationFailure
+          expr: agentfence_audit_chain_verify_failures_total > 0
+          for: 1m
+          labels:
+            severity: {{ .Values.monitoring.prometheusRules.alerts.chainVerificationFailure.severity }}
+          annotations:
+            summary: "Audit chain verification failure detected"
+            description: {{ .Values.monitoring.prometheusRules.alerts.chainVerificationFailure.description | quote }}
+        - alert: HighFenceRate
+          expr: rate(agentfence_fence_events_total[5m]) > 10
+          for: 2m
+          labels:
+            severity: {{ .Values.monitoring.prometheusRules.alerts.highFenceRate.severity }}
+          annotations:
+            summary: "High fence event rate"
+            description: {{ .Values.monitoring.prometheusRules.alerts.highFenceRate.description | quote }}
+        - alert: ProxyDown
+          expr: up{app="agentfence-proxy"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "AgentFence proxy is down"
+{{- end }}

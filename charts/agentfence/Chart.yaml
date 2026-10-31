@@ -1,0 +1,24 @@
+apiVersion: v2
+name: agentfence
+description: AgentFence — Runtime fencing and policy control-plane for autonomous AI agents
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">= 1.27.0"
+keywords:
+  - ai-agents
+  - mcp
+  - policy
+  - security
+  - fencing
+  - autonomous-agents
+home: https://github.com/agentfence/agentfence
+sources:
+  - https://github.com/agentfence/agentfence
+maintainers:
+  - name: AgentFence Team
+    email: team@agentfence.io
+icon: https://raw.githubusercontent.com/agentfence/agentfence/main/docs/icon.svg
+annotations:
+  category: Security
+  licenses: Apache-2.0
