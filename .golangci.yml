@@ -1,0 +1,7 @@
+linters:
+  disable:
+    - errcheck
+issues:
+  exclude-rules:
+    - path: _test\.go
+      text: "SA1012"
