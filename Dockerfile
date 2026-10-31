@@ -8,7 +8,7 @@ RUN apk add --no-cache git ca-certificates
 WORKDIR /src
 
 # Cache dependencies
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source
@@ -29,8 +29,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -extldflags=-static" \
 FROM node:22-alpine AS frontend-builder
 
 WORKDIR /web
-COPY web/package.json web/package-lock.json* ./
-RUN npm ci || npm install
+COPY web/package.json web/package-lock.json* web/.npmrc ./
+RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 COPY web/ ./
 RUN npm run build || (echo "Frontend build expected failures without full setup" && mkdir -p dist && echo "{}" > dist/manifest.json)
@@ -43,7 +43,7 @@ FROM alpine:3.20 AS proxy
 RUN apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /bin/proxy /agentfence/proxy
-COPY --from=builder /src/policy/agentfence/ /agentfence/policy/agentfence/
+COPY policy/agentfence/ /agentfence/policy/agentfence/
 
 EXPOSE 8443
 
